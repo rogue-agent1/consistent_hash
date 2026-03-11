@@ -1,27 +1,45 @@
 #!/usr/bin/env python3
-"""Consistent hashing with virtual nodes."""
+"""Consistent hashing — minimal key remapping when nodes change."""
 import sys, hashlib, bisect
+
 class ConsistentHash:
-    def __init__(self,replicas=100): self.replicas=replicas; self.ring=[]; self.nodes={}
-    def _hash(self,key): return int(hashlib.md5(key.encode()).hexdigest(),16)
-    def add_node(self,node):
+    def __init__(self, replicas=150):
+        self.replicas = replicas; self.ring = []; self.nodes = {}
+    def _hash(self, key):
+        return int(hashlib.sha256(key.encode()).hexdigest(), 16) % (2**32)
+    def add(self, node):
         for i in range(self.replicas):
-            h=self._hash(f"{node}:{i}"); bisect.insort(self.ring,h); self.nodes[h]=node
-    def remove_node(self,node):
-        for i in range(self.replicas):
-            h=self._hash(f"{node}:{i}"); self.ring.remove(h); del self.nodes[h]
-    def get_node(self,key):
-        h=self._hash(key); idx=bisect.bisect(self.ring,h)%len(self.ring)
+            h = self._hash(f"{node}:{i}")
+            bisect.insort(self.ring, h)
+            self.nodes[h] = node
+    def remove(self, node):
+        self.ring = [h for h in self.ring if self.nodes.get(h) != node]
+        self.nodes = {h: n for h, n in self.nodes.items() if n != node}
+    def get(self, key):
+        if not self.ring: return None
+        h = self._hash(key)
+        idx = bisect.bisect_right(self.ring, h) % len(self.ring)
         return self.nodes[self.ring[idx]]
-ch=ConsistentHash(replicas=50)
-for s in ['server-1','server-2','server-3']: ch.add_node(s)
-keys=['user:1','user:2','user:3','photo:1','photo:2','session:abc','session:def']
-print("Before removal:")
-dist=collections.Counter()
-import collections
-for k in keys: node=ch.get_node(k); dist[node]+=1; print(f"  {k:15s} → {node}")
-ch.remove_node('server-2')
-print("\nAfter removing server-2:")
-moved=0
-for k in keys:
-    node=ch.get_node(k); print(f"  {k:15s} → {node}")
+    def distribution(self, keys):
+        d = {}
+        for k in keys:
+            n = self.get(k)
+            d[n] = d.get(n, 0) + 1
+        return d
+
+if __name__ == "__main__":
+    ch = ConsistentHash()
+    nodes = ["server-A", "server-B", "server-C"]
+    for n in nodes: ch.add(n)
+    keys = [f"key-{i}" for i in range(10000)]
+    before = {k: ch.get(k) for k in keys}
+    dist = ch.distribution(keys)
+    print("Distribution (3 nodes, 10000 keys):")
+    for n, c in sorted(dist.items()):
+        print(f"  {n}: {c} ({c/100:.1f}%)")
+    ch.add("server-D")
+    moved = sum(1 for k in keys if ch.get(k) != before[k])
+    print(f"\nAdded server-D: {moved} keys moved ({moved/100:.1f}%)")
+    dist2 = ch.distribution(keys)
+    for n, c in sorted(dist2.items()):
+        print(f"  {n}: {c} ({c/100:.1f}%)")
